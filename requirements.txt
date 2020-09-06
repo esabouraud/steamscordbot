@@ -1,2 +1,3 @@
 steam
 discord.py
+requests
