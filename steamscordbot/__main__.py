@@ -254,17 +254,27 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
         sorted_global_achievements_head = await bot.loop.run_in_executor(pool, functools.partial(
             get_achievements_details, sorted_global_achievements[:10], appids_names))
 
-    output_msg = [
-        "\t**%s** *%s* (unlocked: %s, global: %.2f%%) %s" % (
+    output_header = "The %d %s achievements owned by %s are:" % (
+        len(sorted_global_achievements_head), criteria, steamid)
+    output_lines = [
+        "**%s** *%s* (unlocked: %s, global: %.2f%%)" % (
             achievement["game_name"], achievement["achievement_name"],
             datetime.datetime.fromtimestamp(achievement["unlocktime"]).isoformat(),
-            achievement["percent"], achievement["achievement_icon"])
+            achievement["percent"])
         for achievement in sorted_global_achievements_head]
-    output_msg.insert(0, "The %d %s achievements owned by %s are:" % (
-        len(sorted_global_achievements_head), criteria, steamid))
-    print("\n".join(output_msg))
-    for line in output_msg:
-        await ctx.send(line)
+    output_lines.insert(0, output_header)
+    print("\n\t".join(output_lines))
+
+    # Use embeds for fancy achievement display
+    await ctx.send(output_header)
+    for achievement in sorted_global_achievements_head:
+        embed = discord.Embed(
+            title=achievement["achievement_name"], type="rich")
+        embed.set_thumbnail(url=achievement["achievement_icon"])
+        embed.add_field(name="Game", value=achievement["game_name"], inline=False)
+        embed.add_field(name="Unlocked", value=datetime.datetime.fromtimestamp(achievement["unlocktime"]).isoformat())
+        embed.add_field(name="% of all players", value="%.2f" % achievement["percent"])
+        await ctx.send(embed=embed)
 
 
 @bot.command()
