@@ -2,6 +2,7 @@
 
 import os
 import re
+import datetime
 import functools
 import concurrent.futures
 from multiprocessing.pool import ThreadPool
@@ -11,6 +12,9 @@ import discord.ext.commands
 
 # A regex to determine if a input looks like a SteamId
 PROFILE_RX = re.compile(r"^\d+$")
+ACHIEVEMENT_RAREST = "rarest"
+ACHIEVEMENT_LATEST = "latest"
+
 # The main bot discord client object
 bot = discord.ext.commands.Bot("!$")
 # The API key to use when performing calls to the Steamworks Web API
@@ -91,16 +95,16 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
     # Try to get player's achievements for a game (can fail if the game has no achievement support)
     try:
         player_achievements_response = call_steamapi(
-            steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid)
+            steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid, l="english")
     except requests.exceptions.HTTPError:
         # FIXME find an API call to check that a game has achievements instead
         return []
     if "achievements" not in player_achievements_response["playerstats"]:
         return []
-    player_obtained_achievements = [
-        achievement["apiname"]
+    player_obtained_achievements = {
+        achievement["apiname"]: (achievement["unlocktime"], achievement["name"])
         for achievement in player_achievements_response["playerstats"]["achievements"]
-        if achievement["achieved"] == 1]
+        if achievement["achieved"] == 1}
     # Get the global achievements percentages for the game
     global_achievements_response = call_steamapi(
         steam_apikey, "ISteamUserStats.GetGlobalAchievementPercentagesForApp", gameid=appid)
@@ -108,7 +112,10 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
         return []
     # Add the global achievements percentages to the user's list of obtained achievements
     return [
-        {"appid": appid, "name": achievement["name"], "percent": achievement["percent"]}
+        {
+            "appid": appid, "apiname": achievement["name"], "percent": achievement["percent"],
+            #"name": player_obtained_achievements[achievement["name"]][1],
+            "unlocktime": player_obtained_achievements[achievement["name"]][0]}
         for achievement in global_achievements_response["achievementpercentages"]["achievements"]
         if achievement["name"] in player_obtained_achievements]
 
@@ -130,6 +137,17 @@ def get_player_achievements_with_percentages(steamid, played_appids):
 
 async def achievements_impl(ctx, vanity_or_steamid, criteria):
     """Implementation of achievements retrieval"""
+    # Check if achievement sorting criteria is supported
+    if criteria is None:
+        await ctx.send("Please provide an achievement sorting criteria (available: %s, %s)" % (
+            ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST
+        ))
+        return
+    if criteria not in [ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST]:
+        await ctx.send("Unrecognized achievement sorting criteria: %s (available: %s, %s)" % (
+            criteria, ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST
+        ))
+        return
     # Decide whether player is identified by vanity URL or SteamId
     if PROFILE_RX.match(vanity_or_steamid) is None:
          # Vanity URL provided, resolve it into a SteamId
@@ -156,6 +174,8 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
         for game in owned_games_response["response"]["games"]
         if game["playtime_forever"] > 0]
     print("%s has played %d games" % (steamid, len(played_appids)))
+    await ctx.send(
+        "Please wait while achievement data of %d games is being collected" % len(played_appids))
     # Keep around a dictionary of AppIds: Game Names for nice display later on
     appids_names = {
         game["appid"]: game["name"]
@@ -167,16 +187,44 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
         global_achievements_percentages = await bot.loop.run_in_executor(pool, functools.partial(
             get_player_achievements_with_percentages, steamid, played_appids))
 
-    # Sort the list of achievements owned by the player by global obtention percentage
-    sorted_global_achievements_percentages = sorted(
-        global_achievements_percentages, key=lambda x: x["percent"])
-    output_msg = "The 20 rarest achievements owned by %s are: %s" % (
-        steamid,
-        "\n\t".join(
-            "%s %s (%f %%)" % (appids_names[achievement["appid"]], achievement["name"], achievement["percent"])
-            for achievement in sorted_global_achievements_percentages[:20]))
-    print(output_msg)
-    await ctx.send(output_msg)
+    if criteria == ACHIEVEMENT_RAREST:
+        # Sort the list of achievements owned by the player by increasing global obtention percentage
+        sorted_global_achievements = sorted(
+            global_achievements_percentages, key=lambda x: x["percent"])
+    elif criteria == ACHIEVEMENT_LATEST:
+        # Sort the list of achievements owned by the player by decreasing unlock date
+        sorted_global_achievements = sorted(
+            global_achievements_percentages, reverse=True, key=lambda x: x["unlocktime"])
+
+    # Get achievement details for nice display
+    sorted_global_achievements_head = []
+    for achievement in sorted_global_achievements[:10]:
+        schema_game = await call_steamapi_async(
+            "ISteamUserStats.GetSchemaForGame", appid=achievement["appid"])
+        achievements_dict = {
+            achievement_details["name"]: (achievement_details["displayName"], achievement_details["icon"])
+            for achievement_details in schema_game["game"]["availableGameStats"]["achievements"]}
+        sorted_global_achievements_head.append({
+            # gameName cannot be used reliably, lots of ValveTestAppXXXXXX returned
+            #"game_name": schema_game["game"]["gameName"],
+            "game_name": appids_names[achievement["appid"]],
+            "achievement_name": achievements_dict[achievement["apiname"]][0],
+            "achievement_icon": achievements_dict[achievement["apiname"]][1],
+            "unlocktime": achievement["unlocktime"],
+            "percent": achievement["percent"]
+        })
+
+    output_msg = [
+        "\t**%s** *%s* (unlocked: %s, global: %.2f%%) %s" % (
+            achievement["game_name"], achievement["achievement_name"],
+            datetime.datetime.fromtimestamp(achievement["unlocktime"]).isoformat(),
+            achievement["percent"], achievement["achievement_icon"])
+        for achievement in sorted_global_achievements_head]
+    output_msg.insert(0, "The %d %s achievements owned by %s are:" % (
+        len(sorted_global_achievements_head), criteria, steamid))
+    print("\n".join(output_msg))
+    for line in output_msg:
+        await ctx.send(line)
 
 
 @bot.command()
