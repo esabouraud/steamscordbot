@@ -9,10 +9,13 @@ import requests
 from steam.webapi import WebAPI
 import discord.ext.commands
 
-
+# A regex to determine if a input looks like a SteamId
 PROFILE_RX = re.compile(r"^\d+$")
+# The main bot discord client object
 bot = discord.ext.commands.Bot("!$")
+# The API key to use when performing calls to the Steamworks Web API
 steam_apikey = None
+# A transient dictionary of "Discord Id": "Steam vanity URL"
 discord_steam_map = {}
 
 
@@ -30,6 +33,7 @@ async def call_steamapi_async(method_path, **kwargs):
 
 
 def is_registered():
+    """Decorator checking whether a user has registered with the bot"""
     async def predicate(ctx):
         if ctx.message.author.id in discord_steam_map:
             return True
@@ -40,6 +44,7 @@ def is_registered():
 
 
 def has_vanity_name(func):
+    """Decorator checking whether a command has been provided a vanity_name value"""
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         vanity_name = ctx = args[1]
@@ -82,6 +87,8 @@ async def my_profile(ctx):
 
 
 def get_player_achievements_with_percentages_from_appid(steamid, appid):
+    """Get a list of achivements obtained by a player in a game, with the global obtention percentages"""
+    # Try to get player's achievements for a game (can fail if the game has no achievement support)
     try:
         player_achievements_response = call_steamapi(
             steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid)
@@ -94,10 +101,12 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
         achievement["apiname"]
         for achievement in player_achievements_response["playerstats"]["achievements"]
         if achievement["achieved"] == 1]
+    # Get the global achievements percentages for the game
     global_achievements_response = call_steamapi(
         steam_apikey, "ISteamUserStats.GetGlobalAchievementPercentagesForApp", gameid=appid)
     if "achievements" not in global_achievements_response["achievementpercentages"]:
         return []
+    # Add the global achievements percentages to the user's list of obtained achievements
     return [
         {"appid": appid, "name": achievement["name"], "percent": achievement["percent"]}
         for achievement in global_achievements_response["achievementpercentages"]["achievements"]
@@ -105,28 +114,35 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
 
 
 def get_player_achievements_with_percentages(steamid, played_appids):
+    """Get a list of achivements obtained by a player in multiple games, enriched with global obtention percentages"""
+    # The Steam API will be called synchronously twice per game, so this can be pretty slow
+    # Improve things by running the calls with a pool of threads
     pool = ThreadPool(10)
     player_achievements_with_percentages = pool.starmap(
         get_player_achievements_with_percentages_from_appid,
         [(steamid, appid) for appid in played_appids])
+    # Consolidate the per-game list of achievements into a single global list
     global_achievements_percentages = []
     for player_achievements in player_achievements_with_percentages:
         global_achievements_percentages.extend(player_achievements)
     return global_achievements_percentages
 
 
-async def achievements_impl(ctx, vanity_name, criteria):
+async def achievements_impl(ctx, vanity_or_steamid, criteria):
     """Implementation of achievements retrieval"""
-    if (m := PROFILE_RX.match(vanity_name)) is None:
+    # Decide whether player is identified by vanity URL or SteamId
+    if PROFILE_RX.match(vanity_or_steamid) is None:
+         # Vanity URL provided, resolve it into a SteamId
         vanity_response = await call_steamapi_async(
-            "ISteamUser.ResolveVanityURL", vanityurl=vanity_name, url_type=1)
+            "ISteamUser.ResolveVanityURL", vanityurl=vanity_or_steamid, url_type=1)
         if vanity_response["response"]["success"] != 1:
-            await ctx.send("Error resolving Steam vanity URL: %s" % vanity_name)
+            await ctx.send("Error resolving Steam vanity URL: %s" % vanity_or_steamid)
             return
         steamid = vanity_response["response"]["steamid"]
     else:
-        # Turns out the vanity name was in fact a steamid (only digits)
-        steamid = vanity_name
+        # SteamId (only digits) provided, use it directly
+        steamid = vanity_or_steamid
+    # Get a list of games owned by the player
     owned_games_response = await call_steamapi_async(
         "IPlayerService.GetOwnedGames", steamid=steamid, include_appinfo=True,
         include_played_free_games=False, appids_filter=None, include_free_sub=False)
@@ -134,20 +150,24 @@ async def achievements_impl(ctx, vanity_name, criteria):
         await ctx.send("Error fetching owned games for steamid: %s" % steamid)
         return
     print("%s owns %d games" % (steamid, owned_games_response["response"]["game_count"]))
+    # Restrict the list of owned games to ones that have been played
     played_appids = [
         game["appid"]
         for game in owned_games_response["response"]["games"]
         if game["playtime_forever"] > 0]
     print("%s has played %d games" % (steamid, len(played_appids)))
+    # Keep around a dictionary of AppIds: Game Names for nice display later on
     appids_names = {
         game["appid"]: game["name"]
         for game in owned_games_response["response"]["games"]
     }
 
+    # Do the heavy lifting in a separate thread: lots of synchronous calls to the Steam API to be done
     with concurrent.futures.ThreadPoolExecutor() as pool:
         global_achievements_percentages = await bot.loop.run_in_executor(pool, functools.partial(
             get_player_achievements_with_percentages, steamid, played_appids))
 
+    # Sort the list of achievements owned by the player by global obtention percentage
     sorted_global_achievements_percentages = sorted(
         global_achievements_percentages, key=lambda x: x["percent"])
     output_msg = "The 20 rarest achievements owned by %s are: %s" % (
@@ -157,8 +177,6 @@ async def achievements_impl(ctx, vanity_name, criteria):
             for achievement in sorted_global_achievements_percentages[:20]))
     print(output_msg)
     await ctx.send(output_msg)
-
-    #print(player_achievements_response)
 
 
 @bot.command()
