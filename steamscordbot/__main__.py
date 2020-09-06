@@ -39,6 +39,9 @@ async def call_steamapi_async(method_path, **kwargs):
 def is_registered():
     """Decorator checking whether a user has registered with the bot"""
     async def predicate(ctx):
+        # FIXME find better way to avoid this check when calling help ?
+        if ctx.invoked_with == "help":
+            return True
         if ctx.message.author.id in discord_steam_map:
             return True
         else:
@@ -96,8 +99,9 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
     try:
         player_achievements_response = call_steamapi(
             steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid, l="english")
-    except requests.exceptions.HTTPError:
+    except requests.exceptions.HTTPError as err:
         # FIXME find an API call to check that a game has achievements instead
+        #print("HTTPError: {0}".format(err))
         return []
     if "achievements" not in player_achievements_response["playerstats"]:
         return []
@@ -135,19 +139,19 @@ def get_player_achievements_with_percentages(steamid, played_appids):
     return global_achievements_percentages
 
 
-async def achievements_impl(ctx, vanity_or_steamid, criteria):
-    """Implementation of achievements retrieval"""
+async def achievements_check_input(ctx, vanity_or_steamid, criteria):
+    """Analyze achievement command input parameters"""
     # Check if achievement sorting criteria is supported
     if criteria is None:
         await ctx.send("Please provide an achievement sorting criteria (available: %s, %s)" % (
             ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST
         ))
-        return
+        return None
     if criteria not in [ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST]:
         await ctx.send("Unrecognized achievement sorting criteria: %s (available: %s, %s)" % (
             criteria, ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST
         ))
-        return
+        return None
     # Decide whether player is identified by vanity URL or SteamId
     if PROFILE_RX.match(vanity_or_steamid) is None:
          # Vanity URL provided, resolve it into a SteamId
@@ -155,11 +159,42 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
             "ISteamUser.ResolveVanityURL", vanityurl=vanity_or_steamid, url_type=1)
         if vanity_response["response"]["success"] != 1:
             await ctx.send("Error resolving Steam vanity URL: %s" % vanity_or_steamid)
-            return
+            return None
         steamid = vanity_response["response"]["steamid"]
     else:
         # SteamId (only digits) provided, use it directly
         steamid = vanity_or_steamid
+    return steamid
+
+
+def get_achievement_details_from_appid(achievement, game_name):
+    schema_game = call_steamapi(
+        steam_apikey, "ISteamUserStats.GetSchemaForGame", appid=achievement["appid"])
+    achievements_dict = {
+        achievement_details["name"]: (achievement_details["displayName"], achievement_details["icon"])
+        for achievement_details in schema_game["game"]["availableGameStats"]["achievements"]}
+    return {
+        # gameName cannot be used reliably, lots of ValveTestAppXXXXXX returned
+        #"game_name": schema_game["game"]["gameName"],
+        "game_name": game_name,
+        "achievement_name": achievements_dict[achievement["apiname"]][0],
+        "achievement_icon": achievements_dict[achievement["apiname"]][1],
+        "unlocktime": achievement["unlocktime"],
+        "percent": achievement["percent"]
+    }
+
+
+def get_achievements_details(achievements_list, appids_names):
+    pool = ThreadPool(10)
+    return pool.starmap(
+        get_achievement_details_from_appid,
+        [(achievement, appids_names[achievement["appid"]]) for achievement in achievements_list])
+
+
+async def achievements_impl(ctx, vanity_or_steamid, criteria):
+    """Implementation of achievements retrieval"""
+    if (steamid := await achievements_check_input(ctx, vanity_or_steamid, criteria)) is None:
+        return
     # Get a list of games owned by the player
     owned_games_response = await call_steamapi_async(
         "IPlayerService.GetOwnedGames", steamid=steamid, include_appinfo=True,
@@ -167,13 +202,20 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
     if owned_games_response["response"]["game_count"] < 0:
         await ctx.send("Error fetching owned games for steamid: %s" % steamid)
         return
-    print("%s owns %d games" % (steamid, owned_games_response["response"]["game_count"]))
+    owned_games_count = owned_games_response["response"]["game_count"]
+    print("%s owns %d games" % (steamid, owned_games_count))
+    if owned_games_count == 0:
+        return
     # Restrict the list of owned games to ones that have been played
     played_appids = [
         game["appid"]
         for game in owned_games_response["response"]["games"]
         if game["playtime_forever"] > 0]
-    print("%s has played %d games" % (steamid, len(played_appids)))
+    if len(played_appids) != 0:
+        print("%s has played %d games" % (steamid, len(played_appids)))
+    else:
+        # Some people restrict visibility of their play time, fallback to all owned games
+        played_appids = [game["appid"] for game in owned_games_response["response"]["games"]]
     await ctx.send(
         "Please wait while achievement data of %d games is being collected" % len(played_appids))
     # Keep around a dictionary of AppIds: Game Names for nice display later on
@@ -181,6 +223,17 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
         game["appid"]: game["name"]
         for game in owned_games_response["response"]["games"]
     }
+
+    # Check that the player has allowed public access to his achievements
+    try:
+        call_steamapi(
+            steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=played_appids[0], l="english")
+    except requests.exceptions.HTTPError as err:
+        # FIXME find an API call to check that a player has given access to his achievements instead
+        #print("HTTPError: {0}".format(err))
+        if err.response.status_code == 403:
+            await ctx.send("Error fetching achievement data:\n`%s`" % (err.response.text))
+            return
 
     # Do the heavy lifting in a separate thread: lots of synchronous calls to the Steam API to be done
     with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -197,22 +250,9 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
             global_achievements_percentages, reverse=True, key=lambda x: x["unlocktime"])
 
     # Get achievement details for nice display
-    sorted_global_achievements_head = []
-    for achievement in sorted_global_achievements[:10]:
-        schema_game = await call_steamapi_async(
-            "ISteamUserStats.GetSchemaForGame", appid=achievement["appid"])
-        achievements_dict = {
-            achievement_details["name"]: (achievement_details["displayName"], achievement_details["icon"])
-            for achievement_details in schema_game["game"]["availableGameStats"]["achievements"]}
-        sorted_global_achievements_head.append({
-            # gameName cannot be used reliably, lots of ValveTestAppXXXXXX returned
-            #"game_name": schema_game["game"]["gameName"],
-            "game_name": appids_names[achievement["appid"]],
-            "achievement_name": achievements_dict[achievement["apiname"]][0],
-            "achievement_icon": achievements_dict[achievement["apiname"]][1],
-            "unlocktime": achievement["unlocktime"],
-            "percent": achievement["percent"]
-        })
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        sorted_global_achievements_head = await bot.loop.run_in_executor(pool, functools.partial(
+            get_achievements_details, sorted_global_achievements[:10], appids_names))
 
     output_msg = [
         "\t**%s** *%s* (unlocked: %s, global: %.2f%%) %s" % (
