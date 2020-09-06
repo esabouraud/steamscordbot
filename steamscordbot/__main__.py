@@ -4,6 +4,7 @@ import os
 import re
 import functools
 import concurrent.futures
+from multiprocessing.pool import ThreadPool
 import requests
 from steam.webapi import WebAPI
 import discord.ext.commands
@@ -80,6 +81,40 @@ async def my_profile(ctx):
     await profile_impl(ctx, vanity_name)
 
 
+def get_player_achievements_with_percentages_from_appid(steamid, appid):
+    try:
+        player_achievements_response = call_steamapi(
+            steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid)
+    except requests.exceptions.HTTPError:
+        # FIXME find an API call to check that a game has achievements instead
+        return []
+    if "achievements" not in player_achievements_response["playerstats"]:
+        return []
+    player_obtained_achievements = [
+        achievement["apiname"]
+        for achievement in player_achievements_response["playerstats"]["achievements"]
+        if achievement["achieved"] == 1]
+    global_achievements_response = call_steamapi(
+        steam_apikey, "ISteamUserStats.GetGlobalAchievementPercentagesForApp", gameid=appid)
+    if "achievements" not in global_achievements_response["achievementpercentages"]:
+        return []
+    return [
+        {"appid": appid, "name": achievement["name"], "percent": achievement["percent"]}
+        for achievement in global_achievements_response["achievementpercentages"]["achievements"]
+        if achievement["name"] in player_obtained_achievements]
+
+
+def get_player_achievements_with_percentages(steamid, played_appids):
+    pool = ThreadPool(10)
+    player_achievements_with_percentages = pool.starmap(
+        get_player_achievements_with_percentages_from_appid,
+        [(steamid, appid) for appid in played_appids])
+    global_achievements_percentages = []
+    for player_achievements in player_achievements_with_percentages:
+        global_achievements_percentages.extend(player_achievements)
+    return global_achievements_percentages
+
+
 async def achievements_impl(ctx, vanity_name, criteria):
     """Implementation of achievements retrieval"""
     if (m := PROFILE_RX.match(vanity_name)) is None:
@@ -108,36 +143,20 @@ async def achievements_impl(ctx, vanity_name, criteria):
         game["appid"]: game["name"]
         for game in owned_games_response["response"]["games"]
     }
-    global_achievements_percentages = []
-    for appid in played_appids:
-        try:
-            player_achievements_response = await call_steamapi_async(
-                "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid)
-        except requests.exceptions.HTTPError:
-            # FIXME find an API call to check that a game has achievements instead
-            continue
-        if "achievements" not in player_achievements_response["playerstats"]:
-            continue
-        player_obtained_achievements = [
-            achievement["apiname"]
-            for achievement in player_achievements_response["playerstats"]["achievements"]
-            if achievement["achieved"] == 1]
-        global_achievements_response = await call_steamapi_async(
-            "ISteamUserStats.GetGlobalAchievementPercentagesForApp", gameid=appid)
-        if "achievements" not in global_achievements_response["achievementpercentages"]:
-            continue
-        global_achievements_percentages.extend([
-            {"appid": appid, "name": achievement["name"], "percent": achievement["percent"]}
-            for achievement in global_achievements_response["achievementpercentages"]["achievements"]
-            if achievement["name"] in player_obtained_achievements])
+
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        global_achievements_percentages = await bot.loop.run_in_executor(pool, functools.partial(
+            get_player_achievements_with_percentages, steamid, played_appids))
+
     sorted_global_achievements_percentages = sorted(
         global_achievements_percentages, key=lambda x: x["percent"])
-    print("The 20 rarest achievements owned by %s are: %s" % (
+    output_msg = "The 20 rarest achievements owned by %s are: %s" % (
         steamid,
         "\n\t".join(
             "%s %s (%f %%)" % (appids_names[achievement["appid"]], achievement["name"], achievement["percent"])
-            for achievement in sorted_global_achievements_percentages[:20])
-    ))
+            for achievement in sorted_global_achievements_percentages[:20]))
+    print(output_msg)
+    await ctx.send(output_msg)
 
     #print(player_achievements_response)
 
