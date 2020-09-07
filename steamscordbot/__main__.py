@@ -99,7 +99,7 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
     try:
         player_achievements_response = call_steamapi(
             steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid, l="english")
-    except requests.exceptions.HTTPError as err:
+    except requests.exceptions.HTTPError:
         # FIXME find an API call to check that a game has achievements instead
         #print("HTTPError: {0}".format(err))
         return []
@@ -167,31 +167,44 @@ async def achievements_check_input(ctx, vanity_or_steamid, criteria):
     return steamid
 
 
+def check_achievement_details(achievement_details):
+    """Steam API apparently does not guarantee an achievement has a description"""
+    if "description" in achievement_details:
+        description = achievement_details["description"]
+    else:
+        description = ""
+    return (achievement_details["displayName"], achievement_details["icon"], description)
+
+
 def get_achievement_details_from_appid(achievement, game_name):
+    """Get the details of a single achievement"""
     schema_game = call_steamapi(
         steam_apikey, "ISteamUserStats.GetSchemaForGame", appid=achievement["appid"])
     achievements_dict = {
-        achievement_details["name"]: (achievement_details["displayName"], achievement_details["icon"])
+        achievement_details["name"]: check_achievement_details(achievement_details)
         for achievement_details in schema_game["game"]["availableGameStats"]["achievements"]}
     return {
         # gameName cannot be used reliably, lots of ValveTestAppXXXXXX returned
         #"game_name": schema_game["game"]["gameName"],
+        "appid": achievement["appid"],
         "game_name": game_name,
-        "achievement_name": achievements_dict[achievement["apiname"]][0],
-        "achievement_icon": achievements_dict[achievement["apiname"]][1],
+        "name": achievements_dict[achievement["apiname"]][0],
+        "icon": achievements_dict[achievement["apiname"]][1],
+        "description": achievements_dict[achievement["apiname"]][2],
         "unlocktime": achievement["unlocktime"],
         "percent": achievement["percent"]
     }
 
 
 def get_achievements_details(achievements_list, appids_names):
+    """Get the details of a list of achievements"""
     pool = ThreadPool(10)
     return pool.starmap(
         get_achievement_details_from_appid,
         [(achievement, appids_names[achievement["appid"]]) for achievement in achievements_list])
 
 
-async def achievements_impl(ctx, vanity_or_steamid, criteria):
+async def achievements_impl(ctx, vanity_or_steamid, criteria, max_count):
     """Implementation of achievements retrieval"""
     if (steamid := await achievements_check_input(ctx, vanity_or_steamid, criteria)) is None:
         return
@@ -252,13 +265,13 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
     # Get achievement details for nice display
     with concurrent.futures.ThreadPoolExecutor() as pool:
         sorted_global_achievements_head = await bot.loop.run_in_executor(pool, functools.partial(
-            get_achievements_details, sorted_global_achievements[:10], appids_names))
+            get_achievements_details, sorted_global_achievements[:max_count], appids_names))
 
     output_header = "The %d %s achievements owned by %s are:" % (
         len(sorted_global_achievements_head), criteria, steamid)
     output_lines = [
         "**%s** *%s* (unlocked: %s, global: %.2f%%)" % (
-            achievement["game_name"], achievement["achievement_name"],
+            achievement["game_name"], achievement["name"],
             datetime.datetime.fromtimestamp(achievement["unlocktime"]).isoformat(),
             achievement["percent"])
         for achievement in sorted_global_achievements_head]
@@ -269,27 +282,29 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria):
     await ctx.send(output_header)
     for achievement in sorted_global_achievements_head:
         embed = discord.Embed(
-            title=achievement["achievement_name"], type="rich")
-        embed.set_thumbnail(url=achievement["achievement_icon"])
+            title=achievement["name"], type="rich",
+            url="https://steamcommunity.com/profiles/%s/stats/%s" % (steamid, achievement["appid"]))
+        embed.set_thumbnail(url=achievement["icon"])
         embed.add_field(name="Game", value=achievement["game_name"], inline=False)
         embed.add_field(name="Unlocked", value=datetime.datetime.fromtimestamp(achievement["unlocktime"]).isoformat())
         embed.add_field(name="% of all players", value="%.2f" % achievement["percent"])
+        embed.set_footer(text=achievement["description"])
         await ctx.send(embed=embed)
 
 
 @bot.command()
 @has_vanity_name
-async def achievements(ctx, vanity_name=None, criteria=None):
+async def achievements(ctx, vanity_name=None, criteria=None, max_count="10"):
     """Get profile info based on provided Steam vanity URL"""
-    await achievements_impl(ctx, vanity_name, criteria)
+    await achievements_impl(ctx, vanity_name, criteria, int(max_count))
 
 
 @bot.command()
 @is_registered()
-async def my_achievements(ctx, criteria):
+async def my_achievements(ctx, criteria=None, max_count="10"):
     """Get profile info based on registered Steam vanity URL"""
     vanity_name = discord_steam_map[ctx.message.author.id]
-    await achievements_impl(ctx, vanity_name, criteria)
+    await achievements_impl(ctx, vanity_name, criteria, int(max_count))
 
 
 @bot.command()
