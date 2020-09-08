@@ -15,6 +15,10 @@ PROFILE_RX = re.compile(r"^\d+$")
 ACHIEVEMENT_RAREST = "rarest"
 ACHIEVEMENT_LATEST = "latest"
 ACHIEVEMENT_CRITERIA = [ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST]
+FRIENDS_LIST = "list"
+FRIENDS_OWNED = "owned"
+FRIENDS_RECENT = "recent"
+FRIENDS_SUBCOMMANDS = ["list", "owned", "recent"]
 
 # The main bot discord client object
 bot = discord.ext.commands.Bot("!$")
@@ -46,6 +50,22 @@ def has_vanity_name(func):
             return
         return await func(*args, **kwargs)
     return wrapper
+
+
+async def get_steamid(ctx, vanity_or_steamid):
+    """Decide whether player is identified by vanity URL or SteamId"""
+    if PROFILE_RX.match(vanity_or_steamid) is None:
+         # Vanity URL provided, resolve it into a SteamId
+        vanity_response = await call_steamapi_async(
+            "ISteamUser.ResolveVanityURL", vanityurl=vanity_or_steamid, url_type=1)
+        if vanity_response["response"]["success"] != 1:
+            await ctx.send("Error resolving Steam vanity URL: %s" % vanity_or_steamid)
+            return None
+        steamid = vanity_response["response"]["steamid"]
+    else:
+        # SteamId (only digits) provided, use it directly
+        steamid = vanity_or_steamid
+    return steamid
 
 
 @bot.command()
@@ -124,25 +144,14 @@ async def achievements_check_input(ctx, vanity_or_steamid, criteria, max_count_s
             criteria, ", ".join(ACHIEVEMENT_CRITERIA)
         ))
         return None
+    # Try to parse achievement maximum count
     max_count = 0
     try:
         max_count = int(max_count_str)
     except ValueError:
         await ctx.send("Achievement count must be an integer (%s)" % max_count_str)
         return None
-    # Decide whether player is identified by vanity URL or SteamId
-    if PROFILE_RX.match(vanity_or_steamid) is None:
-         # Vanity URL provided, resolve it into a SteamId
-        vanity_response = await call_steamapi_async(
-            "ISteamUser.ResolveVanityURL", vanityurl=vanity_or_steamid, url_type=1)
-        if vanity_response["response"]["success"] != 1:
-            await ctx.send("Error resolving Steam vanity URL: %s" % vanity_or_steamid)
-            return None
-        steamid = vanity_response["response"]["steamid"]
-    else:
-        # SteamId (only digits) provided, use it directly
-        steamid = vanity_or_steamid
-    return steamid, max_count
+    return await get_steamid(ctx, vanity_or_steamid), max_count
 
 
 def check_achievement_details(achievement_details):
@@ -272,6 +281,97 @@ async def achievements(ctx, vanity_or_steamid=None, criteria=None, max_count_str
         embed.add_field(name="% of all players", value="%.2f" % achievement["percent"])
         embed.set_footer(text=achievement["description"])
         await ctx.send(embed=embed)
+
+
+async def friends_check_input(ctx, vanity_or_steamid, subcommand, max_count_str):
+    """Analyze friends command input parameters"""
+    # Check if achievement sorting criteria is supported
+    if subcommand is None:
+        await ctx.send("Please provide a friends subcommand (available: %s)" % (
+            ", ".join(FRIENDS_SUBCOMMANDS)
+        ))
+        return None
+    if subcommand not in FRIENDS_SUBCOMMANDS:
+        await ctx.send("Unrecognized friends subcommand: %s (available: %s)" % (
+            subcommand, ", ".join(ACHIEVEMENT_CRITERIA)
+        ))
+        return None
+    # Try to parse achievement maximum count
+    max_count = 0
+    try:
+        max_count = int(max_count_str)
+    except ValueError:
+        await ctx.send("Achievement count must be an integer (%s)" % max_count_str)
+        return None
+    return await get_steamid(ctx, vanity_or_steamid), max_count
+
+
+async def friends_list(ctx, steamid, max_count, friendslist):
+    """Display steam profiles previews of friends"""
+    await ctx.send("The Steam friends of player %s are (max. count %d):" % (steamid, max_count))
+    # Sort friendlist: ingame first then online and finally offline
+    sorted_friendlist = sorted(
+        friendslist, key=lambda friend: (
+            "gameextrainfo" not in friend, friend["personastate"] == 0, friend["personaname"]))
+    # Use embeds for fancy friends display
+    for friend in sorted_friendlist[:max_count]:
+        embed = discord.Embed(
+            title=friend["personaname"], type="rich", url=friend["profileurl"])
+        embed.set_thumbnail(url=friend["avatarmedium"])
+        if "gameextrainfo" in friend:
+            friend_status = "In-game: %s" % friend["gameextrainfo"]
+        elif friend["personastate"] != 0:
+            friend_status = "Online"
+        else:
+            friend_status = "Offline"
+        embed.add_field(name="Status", value=friend_status, inline=False)
+        embed.add_field(name="steamid", value=friend["steamid"], inline=True)
+        # Add "last seen online" footer for offline friends
+        if friend["personastate"] == 0:
+            if "lastlogoff" in friend:
+                friend_last_logoff = datetime.datetime.fromtimestamp(friend["lastlogoff"]).isoformat()
+            else:
+                friend_last_logoff = "Unknown"
+            embed.set_footer(text="Last online: %s" % friend_last_logoff)
+        await ctx.send(embed=embed)
+
+
+@bot.command()
+@has_vanity_name
+async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10):
+    """Get most owned or recently played games among friends"""
+    if (inputs := await friends_check_input(ctx, vanity_or_steamid, subcommand, max_count_str)) is None:
+        return
+    steamid = inputs[0]
+    max_count = inputs[1]
+    # Get steamids of friends of the player
+    friendlist_response = await call_steamapi_async(
+        "ISteamUser.GetFriendList", steamid=steamid, relationship="friend")
+    #print(friendlist_response)
+    if "friendslist" not in friendlist_response or "friends" not in friendlist_response["friendslist"]:
+        await ctx.send("Error fetching %s friendlist" % (steamid))
+        return
+    friends_steamids_list = [friend["steamid"] for friend in friendlist_response["friendslist"]["friends"]]
+    await ctx.send("Player %s has %d friends" % (steamid, len(friends_steamids_list)))
+
+    # Get profile summaries of friends of the player
+    friendslist = []
+    steamapi_sclices_size = 50
+    for i in range(0, len(friends_steamids_list), steamapi_sclices_size):
+        # Beware the maximum length of steamids parameter (100)
+        playersummaries_response = await call_steamapi_async(
+            "ISteamUser.GetPlayerSummaries", steamids=",".join(friends_steamids_list[i:i+steamapi_sclices_size]))
+        if "response" not in playersummaries_response or "players" not in playersummaries_response["response"]:
+            await ctx.send("Error fetching friends summaries")
+            return
+        friendslist.extend(playersummaries_response["response"]["players"])
+
+    # Simply list friends
+    if subcommand == FRIENDS_LIST:
+        await friends_list(ctx, steamid, max_count, friendslist)
+    # TBD
+    elif subcommand in [FRIENDS_OWNED, FRIENDS_RECENT]:
+        await ctx.send("Command %s not yet implemented")
 
 
 @bot.event
