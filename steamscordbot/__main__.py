@@ -14,13 +14,12 @@ import discord.ext.commands
 PROFILE_RX = re.compile(r"^\d+$")
 ACHIEVEMENT_RAREST = "rarest"
 ACHIEVEMENT_LATEST = "latest"
+ACHIEVEMENT_CRITERIA = [ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST]
 
 # The main bot discord client object
 bot = discord.ext.commands.Bot("!$")
 # The API key to use when performing calls to the Steamworks Web API
-steam_apikey = None
-# A transient dictionary of "Discord Id": "Steam vanity URL"
-discord_steam_map = {}
+STEAM_APIKEY = None
 
 
 def call_steamapi(*args, **kwargs):
@@ -33,21 +32,7 @@ async def call_steamapi_async(method_path, **kwargs):
     """Wrap Steam API calls to make them async-compatible"""
     with concurrent.futures.ThreadPoolExecutor() as pool:
         return await bot.loop.run_in_executor(pool, functools.partial(
-            call_steamapi, steam_apikey, method_path, **kwargs))
-
-
-def is_registered():
-    """Decorator checking whether a user has registered with the bot"""
-    async def predicate(ctx):
-        # FIXME find better way to avoid this check when calling help ?
-        if ctx.invoked_with == "help":
-            return True
-        if ctx.message.author.id in discord_steam_map:
-            return True
-        else:
-            await ctx.send("Please register a Steam vanity URL")
-            return False
-    return discord.ext.commands.check(predicate)
+            call_steamapi, STEAM_APIKEY, method_path, **kwargs))
 
 
 def has_vanity_name(func):
@@ -71,26 +56,13 @@ async def check(ctx):
     await ctx.send(server_info)
 
 
-async def profile_impl(ctx, vanity_name):
-    """Implementation of profile retrieval"""
-    vanity_url = await call_steamapi_async(
-        "ISteamUser.ResolveVanityURL", vanityurl=vanity_name, url_type=1)
-    await ctx.send(vanity_url)
-
-
 @bot.command()
 @has_vanity_name
 async def profile(ctx, vanity_name=None):
     """Get profile info based on provided Steam vanity URL"""
-    await profile_impl(ctx, vanity_name)
-
-
-@bot.command()
-@is_registered()
-async def my_profile(ctx):
-    """Get profile info based on registered Steam vanity URL"""
-    vanity_name = discord_steam_map[ctx.message.author.id]
-    await profile_impl(ctx, vanity_name)
+    vanity_url = await call_steamapi_async(
+        "ISteamUser.ResolveVanityURL", vanityurl=vanity_name, url_type=1)
+    await ctx.send(vanity_url)
 
 
 def get_player_achievements_with_percentages_from_appid(steamid, appid):
@@ -98,7 +70,7 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
     # Try to get player's achievements for a game (can fail if the game has no achievement support)
     try:
         player_achievements_response = call_steamapi(
-            steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid, l="english")
+            STEAM_APIKEY, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=appid, l="english")
     except requests.exceptions.HTTPError:
         # FIXME find an API call to check that a game has achievements instead
         #print("HTTPError: {0}".format(err))
@@ -111,7 +83,7 @@ def get_player_achievements_with_percentages_from_appid(steamid, appid):
         if achievement["achieved"] == 1}
     # Get the global achievements percentages for the game
     global_achievements_response = call_steamapi(
-        steam_apikey, "ISteamUserStats.GetGlobalAchievementPercentagesForApp", gameid=appid)
+        STEAM_APIKEY, "ISteamUserStats.GetGlobalAchievementPercentagesForApp", gameid=appid)
     if "achievements" not in global_achievements_response["achievementpercentages"]:
         return []
     # Add the global achievements percentages to the user's list of obtained achievements
@@ -139,18 +111,24 @@ def get_player_achievements_with_percentages(steamid, played_appids):
     return global_achievements_percentages
 
 
-async def achievements_check_input(ctx, vanity_or_steamid, criteria):
+async def achievements_check_input(ctx, vanity_or_steamid, criteria, max_count_str):
     """Analyze achievement command input parameters"""
     # Check if achievement sorting criteria is supported
     if criteria is None:
-        await ctx.send("Please provide an achievement sorting criteria (available: %s, %s)" % (
-            ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST
+        await ctx.send("Please provide an achievement sorting criteria (available: %s)" % (
+            ", ".join(ACHIEVEMENT_CRITERIA)
         ))
         return None
-    if criteria not in [ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST]:
-        await ctx.send("Unrecognized achievement sorting criteria: %s (available: %s, %s)" % (
-            criteria, ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST
+    if criteria not in ACHIEVEMENT_CRITERIA:
+        await ctx.send("Unrecognized achievement sorting criteria: %s (available: %s)" % (
+            criteria, ", ".join(ACHIEVEMENT_CRITERIA)
         ))
+        return None
+    max_count = 0
+    try:
+        max_count = int(max_count_str)
+    except ValueError:
+        await ctx.send("Achievement count must be an integer (%s)" % max_count_str)
         return None
     # Decide whether player is identified by vanity URL or SteamId
     if PROFILE_RX.match(vanity_or_steamid) is None:
@@ -164,7 +142,7 @@ async def achievements_check_input(ctx, vanity_or_steamid, criteria):
     else:
         # SteamId (only digits) provided, use it directly
         steamid = vanity_or_steamid
-    return steamid
+    return steamid, max_count
 
 
 def check_achievement_details(achievement_details):
@@ -179,7 +157,7 @@ def check_achievement_details(achievement_details):
 def get_achievement_details_from_appid(achievement, game_name):
     """Get the details of a single achievement"""
     schema_game = call_steamapi(
-        steam_apikey, "ISteamUserStats.GetSchemaForGame", appid=achievement["appid"])
+        STEAM_APIKEY, "ISteamUserStats.GetSchemaForGame", appid=achievement["appid"])
     achievements_dict = {
         achievement_details["name"]: check_achievement_details(achievement_details)
         for achievement_details in schema_game["game"]["availableGameStats"]["achievements"]}
@@ -204,10 +182,14 @@ def get_achievements_details(achievements_list, appids_names):
         [(achievement, appids_names[achievement["appid"]]) for achievement in achievements_list])
 
 
-async def achievements_impl(ctx, vanity_or_steamid, criteria, max_count):
-    """Implementation of achievements retrieval"""
-    if (steamid := await achievements_check_input(ctx, vanity_or_steamid, criteria)) is None:
+@bot.command()
+@has_vanity_name
+async def achievements(ctx, vanity_or_steamid=None, criteria=None, max_count_str="10"):
+    """Get achievments based on vanity url or steam id"""
+    if (inputs := await achievements_check_input(ctx, vanity_or_steamid, criteria, max_count_str)) is None:
         return
+    steamid = inputs[0]
+    max_count = inputs[1]
     # Get a list of games owned by the player
     owned_games_response = await call_steamapi_async(
         "IPlayerService.GetOwnedGames", steamid=steamid, include_appinfo=True,
@@ -240,7 +222,7 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria, max_count):
     # Check that the player has allowed public access to his achievements
     try:
         call_steamapi(
-            steam_apikey, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=played_appids[0], l="english")
+            STEAM_APIKEY, "ISteamUserStats.GetPlayerAchievements", steamid=steamid, appid=played_appids[0], l="english")
     except requests.exceptions.HTTPError as err:
         # FIXME find an API call to check that a player has given access to his achievements instead
         #print("HTTPError: {0}".format(err))
@@ -292,29 +274,6 @@ async def achievements_impl(ctx, vanity_or_steamid, criteria, max_count):
         await ctx.send(embed=embed)
 
 
-@bot.command()
-@has_vanity_name
-async def achievements(ctx, vanity_name=None, criteria=None, max_count="10"):
-    """Get profile info based on provided Steam vanity URL"""
-    await achievements_impl(ctx, vanity_name, criteria, int(max_count))
-
-
-@bot.command()
-@is_registered()
-async def my_achievements(ctx, criteria=None, max_count="10"):
-    """Get profile info based on registered Steam vanity URL"""
-    vanity_name = discord_steam_map[ctx.message.author.id]
-    await achievements_impl(ctx, vanity_name, criteria, int(max_count))
-
-
-@bot.command()
-@has_vanity_name
-async def register(ctx, vanity_name=None):
-    """Register caller Steam profile with the bot"""
-    discord_steam_map[ctx.message.author.id] = vanity_name
-    await ctx.send("Steam profile registered (temporarily)")
-
-
 @bot.event
 async def on_ready():
     """Finalize bot connection to Discord"""
@@ -323,8 +282,8 @@ async def on_ready():
 
 def main():
     """Launch bot"""
-    global steam_apikey
-    steam_apikey = os.environ["STEAM_APIKEY"]
+    global STEAM_APIKEY
+    STEAM_APIKEY = os.environ["STEAM_APIKEY"]
     discord_token = os.environ["DISCORD_TOKEN"]
     try:
         bot.run(discord_token)

@@ -12,6 +12,12 @@ Discord Bot written in Python 3.8 giving access to Steam Web API through chat co
 - ~~list Discord users on server that have linked their Steam accounts (+ mention friends if caller has linked his steam account)~~
   - cannot be done, see limitations below.
 - display Steam user information and status ~~from Discord name if linked~~ or from Steam vanity url name
+- list games played by friends
+  - top recently played
+  - top overall ownership
+- list badges
+  - owned
+  - top owned by friends
 - explore the Steam Web API for ideas : <https://partner.steamgames.com/doc/webapi>
   - list items on sale in marketplace
 - make it a proper chatbot with NLP ?
