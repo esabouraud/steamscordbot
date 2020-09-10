@@ -336,6 +336,55 @@ async def friends_list(ctx, steamid, max_count, friendslist):
         await ctx.send(embed=embed)
 
 
+def get_games_owned_by_player(player):
+    """Get the list of games owned by a single player"""
+    owned_games_response = call_steamapi(
+        STEAM_APIKEY, "IPlayerService.GetOwnedGames", steamid=player["steamid"], include_appinfo=True,
+        include_played_free_games=False, appids_filter=None, include_free_sub=False)
+    if "game_count" not in owned_games_response["response"] or owned_games_response["response"]["game_count"] <= 0:
+        return player["steamid"], []
+    return player["steamid"], owned_games_response["response"]["games"]
+
+
+def get_games_owned_by_players(playerslist):
+    """Build a a list of games owned by players"""
+    # Get a list of tuples (player, list of of games)
+    pool = ThreadPool(10)
+    return pool.map(get_games_owned_by_player, playerslist)
+
+
+async def friends_owned(ctx, steamid, max_count, playerslist):
+    """Display games most owned among a list of players"""
+    # Do the slow part in a separate thread: one synchronous call per player to the Steam API to be done
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        steamid_games_list = await bot.loop.run_in_executor(pool, functools.partial(
+            get_games_owned_by_players, playerslist))
+    # Build a dict of players indexed by steamid for later use
+    # playersdict = {player["steamid"]: player for player in playerslist}
+    # Build a dict of games indexed by appid, with a list of owners identified by steamid
+    appid_game_steamids_dict = {}
+    for steamid, games in steamid_games_list:
+        for game in games:
+            appid = game["appid"]
+            if appid in appid_game_steamids_dict:
+                appid_game_steamids_dict[appid][1].append(steamid)
+            else:
+                appid_game_steamids_dict[appid] = (game, [steamid])
+    # Build sorted list of games per number of owners
+    game_ownercount_list = [
+        (game, len(steamids))
+        for game, steamids in appid_game_steamids_dict.values()]
+    game_ownercount_list.sort(reverse=True, key=lambda e: e[1])
+    # Send the results
+    for game, count in game_ownercount_list[:max_count]:
+        embed = discord.Embed(
+            title=game["name"], type="rich")
+        embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
+            game["appid"], game["img_logo_url"]))
+        embed.add_field(name="Owned by", value="%d friends" % (count), inline=True)
+        await ctx.send(embed=embed)
+
+
 @bot.command()
 @has_vanity_name
 async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10):
@@ -369,8 +418,11 @@ async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10
     # Simply list friends
     if subcommand == FRIENDS_LIST:
         await friends_list(ctx, steamid, max_count, friendslist)
+    # List most owned games
+    elif subcommand == FRIENDS_OWNED:
+        await friends_owned(ctx, steamid, max_count, friendslist)
     # TBD
-    elif subcommand in [FRIENDS_OWNED, FRIENDS_RECENT]:
+    elif subcommand == FRIENDS_RECENT:
         await ctx.send("Command %s not yet implemented")
 
 
