@@ -376,12 +376,69 @@ async def friends_owned(ctx, steamid, max_count, playerslist):
         for game, steamids in appid_game_steamids_dict.values()]
     game_ownercount_list.sort(reverse=True, key=lambda e: e[1])
     # Send the results
+    await ctx.send("List of the %d most owned games by friends of %s:" % (max_count, steamid))
     for game, count in game_ownercount_list[:max_count]:
         embed = discord.Embed(
             title=game["name"], type="rich")
         embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
             game["appid"], game["img_logo_url"]))
         embed.add_field(name="Owned by", value="%d friends" % (count), inline=True)
+        await ctx.send(embed=embed)
+
+
+def get_games_recently_played_by_player(player):
+    """Get the list of games recently played by a single player"""
+    recent_games_response = call_steamapi(
+        STEAM_APIKEY, "IPlayerService.GetRecentlyPlayedGames", steamid=player["steamid"], count=0)
+    if "total_count" not in recent_games_response["response"] or recent_games_response["response"]["total_count"] <= 0:
+        return player["steamid"], []
+    return player["steamid"], recent_games_response["response"]["games"]
+
+
+def get_games_recently_played_by_players(playerslist):
+    """Build a a list of games recently played by players"""
+    # Get a list of tuples (player, list of of games)
+    pool = ThreadPool(10)
+    return pool.map(get_games_recently_played_by_player, playerslist)
+
+
+async def friends_recent(ctx, steamid, max_count, playerslist):
+    """Display games most played recently among a list of players"""
+        # Do the slow part in a separate thread: one synchronous call per player to the Steam API to be done
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        steamid_games_list = await bot.loop.run_in_executor(pool, functools.partial(
+            get_games_recently_played_by_players, playerslist))
+    # Build a dict of players indexed by steamid for later use
+    playersdict = {player["steamid"]: player for player in playerslist}
+    # Build a dict of games indexed by appid, with a list of owners identified by steamid
+    appid_game_playtime_dict = {}
+    for steamid, games in steamid_games_list:
+        for game in games:
+            appid = game["appid"]
+            if appid in appid_game_playtime_dict:
+                appid_game_playtime_dict[appid][1].append((game["playtime_2weeks"], steamid))
+            else:
+                appid_game_playtime_dict[appid] = (game, [(game["playtime_2weeks"], steamid)])
+    # Build sorted list of games per playtime
+    game_playtime_list = [
+        (
+            game,
+            sum([playtime for playtime, _steamid in playtime_steamids]),
+            len([steamid for _playtime, steamid in playtime_steamids]),
+            [steamid for _playtime, steamid in playtime_steamids])
+        for game, playtime_steamids in appid_game_playtime_dict.values()]
+    game_playtime_list.sort(reverse=True, key=lambda e: e[1])
+    # Send the results
+    await ctx.send("List of the %d most played games by friends of %s during the last 2 weeks:" % (max_count, steamid))
+    for game, playtime, count, steamids in game_playtime_list[:max_count]:
+        embed = discord.Embed(
+            title=game["name"], type="rich")
+        embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
+            game["appid"], game["img_logo_url"]))
+        embed.add_field(name="Time played", value="%dh%dm" % divmod(playtime, 60), inline=True)
+        embed.add_field(name="Played by", value="%d friends" % (count), inline=True)
+        embed.set_footer(text="Players: %s" % ", ".join(
+            [playersdict[steamid]["personaname"] for steamid in steamids]))
         await ctx.send(embed=embed)
 
 
@@ -421,9 +478,9 @@ async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10
     # List most owned games
     elif subcommand == FRIENDS_OWNED:
         await friends_owned(ctx, steamid, max_count, friendslist)
-    # TBD
+    # List recently played games
     elif subcommand == FRIENDS_RECENT:
-        await ctx.send("Command %s not yet implemented")
+        await friends_recent(ctx, steamid, max_count, friendslist)
 
 
 @bot.event
