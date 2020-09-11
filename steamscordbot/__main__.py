@@ -321,10 +321,18 @@ async def friends_check_input(ctx, vanity_or_steamid, subcommand, max_count_str)
 async def friends_list(ctx, player, max_count, friendslist):
     """Display steam profiles previews of friends"""
     await ctx.send("The Steam friends of player %s are (max. count %d):" % (player["personaname"], max_count))
-    # Sort friendlist: ingame first then online and finally offline
+    # Sort friendlist: ingame alphabetically, then online alphabetically, finally offline reverese chronologically
     sorted_friendlist = sorted(
         friendslist, key=lambda friend: (
-            "gameextrainfo" not in friend, friend["personastate"] == 0, friend["personaname"]))
+            # False when friend is in-game: will be at the start of the list
+            "gameextrainfo" not in friend,
+            # False when friend is online: will be after in-game in list
+            friend["personastate"] == 0,
+            # 0 for in-game or online friends : no effect on list order for those
+            # -1*lastlogoff for offline friends: last seen comes first in list
+            -friend["lastlogoff"] if "lastlogoff" in friend else 0,
+            # Alphabetical sort for in-game and online friends
+            friend["personaname"]))
     # Use embeds for fancy friends display
     for friend in sorted_friendlist[:max_count]:
         embed = discord.Embed(
