@@ -405,7 +405,7 @@ async def friends_owned(ctx, player, max_count, playerslist):
         max_count, friends_with_games_count, player["personaname"]))
     for game, count, steamids in game_ownercount_list[:max_count]:
         embed = discord.Embed(
-            title=game["name"], type="rich")
+            title=game["name"], type="rich", url="https://store.steampowered.com/app/%s/" % game["appid"])
         embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
             game["appid"], game["img_logo_url"]))
         embed.add_field(name="Owned by", value="%d friends" % (count), inline=True)
@@ -463,7 +463,7 @@ async def friends_recent(ctx, player, max_count, playerslist):
         max_count, friends_with_games_count, player["personaname"]))
     for game, playtime, count, steamids in game_playtime_list[:max_count]:
         embed = discord.Embed(
-            title=game["name"], type="rich")
+            title=game["name"], type="rich", url="https://store.steampowered.com/app/%s/" % game["appid"])
         embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
             game["appid"], game["img_logo_url"]))
         embed.add_field(name="Time played", value="%dh%dm" % divmod(playtime, 60), inline=True)
