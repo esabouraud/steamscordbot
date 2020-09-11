@@ -68,6 +68,18 @@ async def get_steamid(ctx, vanity_or_steamid):
     return steamid
 
 
+async def get_player_summary(steamid):
+    """Fetch single player summary by steamid"""
+    playersummaries_response = await call_steamapi_async(
+        "ISteamUser.GetPlayerSummaries", steamids=steamid)
+    if (
+            "response" not in playersummaries_response
+            or "players" not in playersummaries_response["response"]
+            or len(playersummaries_response["response"]["players"]) == 0):
+        return None
+    return playersummaries_response["response"]["players"][0]
+
+
 @bot.command()
 async def check(ctx):
     """Perform a simple Steam API availability check"""
@@ -306,9 +318,9 @@ async def friends_check_input(ctx, vanity_or_steamid, subcommand, max_count_str)
     return await get_steamid(ctx, vanity_or_steamid), max_count
 
 
-async def friends_list(ctx, steamid, max_count, friendslist):
+async def friends_list(ctx, player, max_count, friendslist):
     """Display steam profiles previews of friends"""
-    await ctx.send("The Steam friends of player %s are (max. count %d):" % (steamid, max_count))
+    await ctx.send("The Steam friends of player %s are (max. count %d):" % (player["personaname"], max_count))
     # Sort friendlist: ingame first then online and finally offline
     sorted_friendlist = sorted(
         friendslist, key=lambda friend: (
@@ -353,7 +365,7 @@ def get_games_owned_by_players(playerslist):
     return pool.map(get_games_owned_by_player, playerslist)
 
 
-async def friends_owned(ctx, steamid, max_count, playerslist):
+async def friends_owned(ctx, player, max_count, playerslist):
     """Display games most owned among a list of players"""
     # Do the slow part in a separate thread: one synchronous call per player to the Steam API to be done
     with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -378,8 +390,11 @@ async def friends_owned(ctx, steamid, max_count, playerslist):
             [steamid for steamid in steamids])
         for game, steamids in appid_game_steamids_dict.values()]
     game_ownercount_list.sort(reverse=True, key=lambda e: e[1])
+    friends_with_games_count = len([
+        steamid for steamid, games in steamid_games_list if len(games) == 0])
     # Send the results
-    await ctx.send("List of the %d most owned games by friends of %s:" % (max_count, steamid))
+    await ctx.send("List of the %d most owned games by %d friends of %s:" % (
+        max_count, friends_with_games_count, player["personaname"]))
     for game, count, steamids in game_ownercount_list[:max_count]:
         embed = discord.Embed(
             title=game["name"], type="rich")
@@ -407,7 +422,7 @@ def get_games_recently_played_by_players(playerslist):
     return pool.map(get_games_recently_played_by_player, playerslist)
 
 
-async def friends_recent(ctx, steamid, max_count, playerslist):
+async def friends_recent(ctx, player, max_count, playerslist):
     """Display games most played recently among a list of players"""
         # Do the slow part in a separate thread: one synchronous call per player to the Steam API to be done
     with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -433,8 +448,11 @@ async def friends_recent(ctx, steamid, max_count, playerslist):
             [steamid for _playtime, steamid in playtime_steamids])
         for game, playtime_steamids in appid_game_playtime_dict.values()]
     game_playtime_list.sort(reverse=True, key=lambda e: e[1])
+    friends_with_games_count = len([
+        steamid for steamid, games in steamid_games_list if len(games) == 0])
     # Send the results
-    await ctx.send("List of the %d most played games by friends of %s during the last 2 weeks:" % (max_count, steamid))
+    await ctx.send("List of the %d most played games by %d friends of %s during the last 2 weeks:" % (
+        max_count, friends_with_games_count, player["personaname"]))
     for game, playtime, count, steamids in game_playtime_list[:max_count]:
         embed = discord.Embed(
             title=game["name"], type="rich")
@@ -455,6 +473,10 @@ async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10
         return
     steamid = inputs[0]
     max_count = inputs[1]
+    # Get Summary for the player identified by steamid
+    if (player := await get_player_summary(steamid)) is None:
+        await ctx.send("Error fetching player summary")
+        return
     # Get steamids of friends of the player
     friendlist_response = await call_steamapi_async(
         "ISteamUser.GetFriendList", steamid=steamid, relationship="friend")
@@ -463,7 +485,7 @@ async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10
         await ctx.send("Error fetching %s friendlist" % (steamid))
         return
     friends_steamids_list = [friend["steamid"] for friend in friendlist_response["friendslist"]["friends"]]
-    await ctx.send("Player %s has %d friends" % (steamid, len(friends_steamids_list)))
+    await ctx.send("Player %s (%s) has %d friends" % (player["personaname"], steamid, len(friends_steamids_list)))
 
     # Get profile summaries of friends of the player
     friendslist = []
@@ -479,13 +501,13 @@ async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10
 
     # Simply list friends
     if subcommand == FRIENDS_LIST:
-        await friends_list(ctx, steamid, max_count, friendslist)
+        await friends_list(ctx, player, max_count, friendslist)
     # List most owned games
     elif subcommand == FRIENDS_OWNED:
-        await friends_owned(ctx, steamid, max_count, friendslist)
+        await friends_owned(ctx, player, max_count, friendslist)
     # List recently played games
     elif subcommand == FRIENDS_RECENT:
-        await friends_recent(ctx, steamid, max_count, friendslist)
+        await friends_recent(ctx, player, max_count, friendslist)
 
 
 @bot.event
