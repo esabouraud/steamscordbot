@@ -360,7 +360,7 @@ async def friends_owned(ctx, steamid, max_count, playerslist):
         steamid_games_list = await bot.loop.run_in_executor(pool, functools.partial(
             get_games_owned_by_players, playerslist))
     # Build a dict of players indexed by steamid for later use
-    # playersdict = {player["steamid"]: player for player in playerslist}
+    playersdict = {player["steamid"]: player for player in playerslist}
     # Build a dict of games indexed by appid, with a list of owners identified by steamid
     appid_game_steamids_dict = {}
     for steamid, games in steamid_games_list:
@@ -372,17 +372,22 @@ async def friends_owned(ctx, steamid, max_count, playerslist):
                 appid_game_steamids_dict[appid] = (game, [steamid])
     # Build sorted list of games per number of owners
     game_ownercount_list = [
-        (game, len(steamids))
+        (
+            game,
+            len(steamids),
+            [steamid for steamid in steamids])
         for game, steamids in appid_game_steamids_dict.values()]
     game_ownercount_list.sort(reverse=True, key=lambda e: e[1])
     # Send the results
     await ctx.send("List of the %d most owned games by friends of %s:" % (max_count, steamid))
-    for game, count in game_ownercount_list[:max_count]:
+    for game, count, steamids in game_ownercount_list[:max_count]:
         embed = discord.Embed(
             title=game["name"], type="rich")
         embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
             game["appid"], game["img_logo_url"]))
         embed.add_field(name="Owned by", value="%d friends" % (count), inline=True)
+        embed.set_footer(text="Owners: %s" % ", ".join(
+            [playersdict[steamid]["personaname"] for steamid in steamids]))
         await ctx.send(embed=embed)
 
 
