@@ -21,7 +21,7 @@ FRIENDS_RECENT = "recent"
 FRIENDS_SUBCOMMANDS = ["list", "owned", "recent"]
 
 # The main bot discord client object
-bot = discord.ext.commands.Bot("!$")
+bot = discord.ext.commands.Bot("!$", activity=discord.Game("!$help"))
 # The API key to use when performing calls to the Steamworks Web API
 STEAM_APIKEY = None
 
@@ -124,7 +124,7 @@ async def profile(ctx, vanity_or_steamid=None):
 
 
 def get_player_achievements_with_percentages_from_appid(steamid, appid):
-    """Get a list of achivements obtained by a player in a game, with the global obtention percentages"""
+    """Get a list of achievements obtained by a player in a game, with the global obtention percentages"""
     # Try to get player's achievements for a game (can fail if the game has no achievement support)
     try:
         player_achievements_response = call_steamapi(
