@@ -1,25 +1,83 @@
 # steamscordbot
 
-Discord Bot written in Python 3.8 giving access to Steam Web API through chat commands.
+Discord Bot written in Python 3.8 giving access to parts of the [Steamworks Web API](https://partner.steamgames.com/doc/webapi) through chat commands.
+
+It depends on:
+
+- [steam](https://github.com/ValvePython/steam)
+- [discord.py](https://github.com/Rapptz/discord.py)
 
 ## Features
 
-- Resolve a vanity URL name into a Steam ID
+- Resolve a vanity URL name into a Steam ID and display name
 - List rarest or latest achievements of a public Steam profile
+- List games most owned or recently played by friends of a public Steam profile
+
+## Prerequisites
+
+- Get a Steam API key : <https://steamcommunity.com/dev/apikey>
+- Get a Discord Bot Token : <https://discord.com/developers/applications>
+
+## Installation
+
+```sh
+git clone https://github.com/esabouraud/steamscordbot.git
+cd steamscordbot
+pip install -U -r requirements.txt
+```
+
+## Run
+
+### Windows
+
+```sh
+set STEAM_APIKEY=<Steam API key>
+set DISCORD_TOKEN=<Discord Bot Token>
+py -3 -m steamscordbot
+```
+
+### Docker
+
+```sh
+docker build -t steamscordbot .
+docker run -d -e STEAM_APIKEY=<Steam API key> -e DISCORD_TOKEN=<Discord Bot Token> --restart=unless-stopped --name steamscord steamscordbot
+```
+
+## Usage
+
+Use discord to send a message to the bot or to a text channel it is present on.
+
+The bot command prefix is: `!$`
+
+A Steam user is identified by either:
+
+- his unique steamid (e.g. **76561197971216318** in <https://steamcommunity.com/profiles/76561197968052866>)
+- his custom url (e.g. **gaben** in <https://steamcommunity.com/id/gaben>)
+
+Supported commands are:
+
+- **achievements**: Get achievements of a Steam user
+- **check**: Perform a simple Steam API availability check
+- **friends**: Get most owned or recently played games among friends of a profile
+- **help**: Shows help message
+- **profile**: Get profile info based on provided Steam vanity URL or steamid
+
+Samples:
+
+- `!$check`
+- `!$profile gaben`
+- `!$achievements gaben rarest`
+- `!$achievements 76561197968052866 latest`
+- `!$friends gaben list 5`
+- `!$friends 76561197968052866 owned 15`
+- `!$friends 76561197968052866 recent`
 
 ## TODO
 
 - ~~list Discord users on server that have linked their Steam accounts (+ mention friends if caller has linked his steam account)~~
   - cannot be done, see limitations below.
-- display Steam user information and status ~~from Discord name if linked~~ or from Steam vanity url name
-- list games played by friends
-  - top recently played
-  - top overall ownership
-- list badges
-  - owned
-  - top owned by friends
-- explore the Steam Web API for ideas : <https://partner.steamgames.com/doc/webapi>
-  - list items on sale in marketplace
+- List rarest or latest badges of a public Steam profile
+- List badges most owned or recently obtained by friends of a public Steam profile
 - make it a proper chatbot with NLP ?
 
 ## Limitations
