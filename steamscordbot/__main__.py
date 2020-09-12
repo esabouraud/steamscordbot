@@ -407,7 +407,7 @@ async def friends_owned(ctx, player, max_count, playerslist):
         for game, steamids in appid_game_steamids_dict.values()]
     game_ownercount_list.sort(reverse=True, key=lambda e: e[1])
     friends_with_games_count = len([
-        steamid for steamid, games in steamid_games_list if len(games) == 0])
+        steamid for steamid, games in steamid_games_list if len(games) != 0])
     # Send the results
     await ctx.send("List of the %d most owned games by %d friends of %s:" % (
         max_count, friends_with_games_count, player["personaname"]))
@@ -465,7 +465,7 @@ async def friends_recent(ctx, player, max_count, playerslist):
         for game, playtime_steamids in appid_game_playtime_dict.values()]
     game_playtime_list.sort(reverse=True, key=lambda e: e[1])
     friends_with_games_count = len([
-        steamid for steamid, games in steamid_games_list if len(games) == 0])
+        steamid for steamid, games in steamid_games_list if len(games) != 0])
     # Send the results
     await ctx.send("List of the %d most played games by %d friends of %s during the last 2 weeks:" % (
         max_count, friends_with_games_count, player["personaname"]))
