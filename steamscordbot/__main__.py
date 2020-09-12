@@ -43,10 +43,10 @@ def has_vanity_name(func):
     """Decorator checking whether a command has been provided a vanity_name value"""
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        vanity_name = ctx = args[1]
+        vanity_name = args[1]
         if vanity_name is None:
             ctx = args[0]
-            await ctx.send("Please provide a Steam vanity URL")
+            await ctx.send("Please provide a Steam vanity URL or steamid")
             return
         return await func(*args, **kwargs)
     return wrapper
@@ -80,6 +80,29 @@ async def get_player_summary(steamid):
     return playersummaries_response["response"]["players"][0]
 
 
+def format_player_embed(friend):
+    """Return a player summary exported as discord Embed object"""
+    embed = discord.Embed(
+        title=friend["personaname"], type="rich", url=friend["profileurl"])
+    embed.set_thumbnail(url=friend["avatarmedium"])
+    if "gameextrainfo" in friend:
+        friend_status = "In-game: %s" % friend["gameextrainfo"]
+    elif friend["personastate"] != 0:
+        friend_status = "Online"
+    else:
+        friend_status = "Offline"
+    embed.add_field(name="Status", value=friend_status, inline=False)
+    embed.add_field(name="steamid", value=friend["steamid"], inline=True)
+    # Add "last seen online" footer for offline friends
+    if friend["personastate"] == 0:
+        if "lastlogoff" in friend:
+            friend_last_logoff = datetime.datetime.fromtimestamp(friend["lastlogoff"]).isoformat()
+        else:
+            friend_last_logoff = "Unknown"
+        embed.set_footer(text="Last online: %s" % friend_last_logoff)
+    return embed
+
+
 @bot.command()
 async def check(ctx):
     """Perform a simple Steam API availability check"""
@@ -90,11 +113,14 @@ async def check(ctx):
 
 @bot.command()
 @has_vanity_name
-async def profile(ctx, vanity_name=None):
-    """Get profile info based on provided Steam vanity URL"""
-    vanity_url = await call_steamapi_async(
-        "ISteamUser.ResolveVanityURL", vanityurl=vanity_name, url_type=1)
-    await ctx.send(vanity_url)
+async def profile(ctx, vanity_or_steamid=None):
+    """Get profile info based on provided Steam vanity URL or steamid"""
+    if (steamid := await get_steamid(ctx, vanity_or_steamid)) is None:
+        return
+    if (player := await get_player_summary(steamid)) is None:
+        await ctx.send("Error fetching player summary")
+        return
+    await ctx.send(embed=format_player_embed(player))
 
 
 def get_player_achievements_with_percentages_from_appid(steamid, appid):
@@ -335,25 +361,7 @@ async def friends_list(ctx, player, max_count, friendslist):
             friend["personaname"]))
     # Use embeds for fancy friends display
     for friend in sorted_friendlist[:max_count]:
-        embed = discord.Embed(
-            title=friend["personaname"], type="rich", url=friend["profileurl"])
-        embed.set_thumbnail(url=friend["avatarmedium"])
-        if "gameextrainfo" in friend:
-            friend_status = "In-game: %s" % friend["gameextrainfo"]
-        elif friend["personastate"] != 0:
-            friend_status = "Online"
-        else:
-            friend_status = "Offline"
-        embed.add_field(name="Status", value=friend_status, inline=False)
-        embed.add_field(name="steamid", value=friend["steamid"], inline=True)
-        # Add "last seen online" footer for offline friends
-        if friend["personastate"] == 0:
-            if "lastlogoff" in friend:
-                friend_last_logoff = datetime.datetime.fromtimestamp(friend["lastlogoff"]).isoformat()
-            else:
-                friend_last_logoff = "Unknown"
-            embed.set_footer(text="Last online: %s" % friend_last_logoff)
-        await ctx.send(embed=embed)
+        await ctx.send(embed=format_player_embed(friend))
 
 
 def get_games_owned_by_player(player):
