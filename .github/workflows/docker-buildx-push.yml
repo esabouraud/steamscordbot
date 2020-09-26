@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: master
+    tags: v*
 
 jobs:
   multi:
@@ -12,6 +13,18 @@ jobs:
         name: Checkout
         uses: actions/checkout@v2
       -
+        name: Prepare
+        id: prep
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          elif [[ $GITHUB_REF == refs/heads/master ]]; then
+            VERSION=latest
+          else
+            VERSION=unstable
+          fi
+          echo ::set-output name=tag_name::${VERSION}
+      -
         name: Set up QEMU
         uses: docker/setup-qemu-action@v1
       -
@@ -19,7 +32,7 @@ jobs:
         uses: docker/setup-buildx-action@v1
       -
         name: Login to DockerHub
-        uses: docker/login-action@v1 
+        uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -29,7 +42,6 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          platforms: linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64
           push: true
-          tags: |
-            esabouraud/steamscordbot:latest
+          tags: esabouraud/steamscordbot:${{ steps.prep.outputs.tag_name }}
