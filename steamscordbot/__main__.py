@@ -2,6 +2,7 @@
 
 import os
 import re
+import argparse
 import datetime
 import functools
 import concurrent.futures
@@ -9,6 +10,7 @@ from multiprocessing.pool import ThreadPool
 import requests
 from steam.webapi import WebAPI
 import discord.ext.commands
+import steamscordbot
 
 # A regex to determine if a input looks like a SteamId
 PROFILE_RX = re.compile(r"^\d+$")
@@ -534,9 +536,19 @@ async def on_ready():
 
 def main():
     """Launch bot"""
+    parser = argparse.ArgumentParser(
+        prog=steamscordbot.__name__, description=steamscordbot.__doc__)
+    parser.add_argument(
+        "-S", "--steam-apikey", dest="steam_apikey", default=None, help="Steam API key")
+    parser.add_argument(
+        "-D", "--discord-token", dest="discord_token", default=None, help="Discord token")
+    parser.add_argument(
+        "--version", action="version", version=steamscordbot.__version__)
+    options = parser.parse_args()
+
     global STEAM_APIKEY
-    STEAM_APIKEY = os.environ["STEAM_APIKEY"]
-    discord_token = os.environ["DISCORD_TOKEN"]
+    STEAM_APIKEY = options.steam_apikey if options.steam_apikey else os.environ["STEAM_APIKEY"]
+    discord_token = options.discord_token if options.discord_token else os.environ["DISCORD_TOKEN"]
     try:
         bot.run(discord_token)
     except KeyboardInterrupt:
