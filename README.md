@@ -1,6 +1,9 @@
 # steamscordbot
 
-Discord Bot written in Python 3.8 giving access to parts of the [Steamworks Web API](https://partner.steamgames.com/doc/webapi) through chat commands.
+[![pypi status](https://github.com/esabouraud/steamscordbot/workflows/pypi/badge.svg)](https://github.com/esabouraud/steamscordbot/actions?query=workflow%3Apypi)
+[![docker status](https://github.com/esabouraud/steamscordbot/workflows/docker/badge.svg)](https://github.com/esabouraud/steamscordbot/actions?query=workflow%3Adocker)
+
+Discord Bot written in Python 3.8 using the [Steamworks Web API](https://partner.steamgames.com/doc/webapi) to provide Steam user data through chat commands.
 
 It depends on:
 
@@ -20,6 +23,14 @@ It depends on:
 
 ## Installation
 
+### With pip
+
+```sh
+pip install steamscordbot
+```
+
+### From source
+
 ```sh
 git clone https://github.com/esabouraud/steamscordbot.git
 cd steamscordbot
@@ -28,12 +39,29 @@ pip install -U -r requirements.txt
 
 ## Run
 
+### Generic
+
+```sh
+python -m steamscordbot --steam_apikey=<Steam API key> --discord-token=<Discord Bot Token>
+```
+
+The CLI arguments can also be passed as environment variables (useful when running in a container hosted by a cloud service provider).
+The CLI arguments override the corresponding environment variables when both are available.
+
 ### Windows
 
 ```sh
 set STEAM_APIKEY=<Steam API key>
 set DISCORD_TOKEN=<Discord Bot Token>
 py -3 -m steamscordbot
+```
+
+### Linux (Bash)
+
+```sh
+export STEAM_APIKEY=<Steam API key>
+export DISCORD_TOKEN=<Discord Bot Token>
+python3 -m steamscordbot
 ```
 
 ### Docker
