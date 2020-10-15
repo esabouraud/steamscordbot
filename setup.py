@@ -1,5 +1,6 @@
 """Package the bot"""
 
+import os
 import setuptools
 import steamscordbot
 
@@ -14,10 +15,17 @@ def get_long_description():
         readme = readme_file.read()
         return readme[readme.find("# steamscordbot"):]
 
+def get_version():
+    version_list = [steamscordbot.__version__]
+    if "GITHUB_REF" in os.environ and not os.environ["GITHUB_REF"].startswith("refs/tags"):
+        version_list.append(".dev")
+        version_list.append(os.environ["GITHUB_RUN_NUMBER"])
+    return "".join(version_list)
+
 if __name__ == '__main__':
     setuptools.setup(
         name=steamscordbot.__name__,
-        version=steamscordbot.__version__,
+        version=get_version(),
         author=steamscordbot.__author__,
         author_email="esabouraud@users.noreply.github.com",
         description=steamscordbot.__doc__,
