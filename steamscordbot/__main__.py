@@ -1,4 +1,4 @@
-"""Discord bot calling Steam Web API on command"""
+"""Main logic of the bot"""
 
 import os
 import re
