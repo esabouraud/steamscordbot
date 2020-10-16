@@ -29,12 +29,29 @@ It depends on:
 pip install steamscordbot
 ```
 
+### With Docker
+
+```sh
+docker pull esabouraud/steamscordbot
+```
+
 ### From source
 
 ```sh
 git clone https://github.com/esabouraud/steamscordbot.git
 cd steamscordbot
+```
+
+Then
+
+```sh
 pip install -U -r requirements.txt
+```
+
+Or
+
+```sh
+docker build -t esabouraud/steamscordbot .
 ```
 
 ## Run
@@ -67,8 +84,7 @@ python3 -m steamscordbot
 ### Docker
 
 ```sh
-docker build -t steamscordbot .
-docker run -d -e STEAM_APIKEY=<Steam API key> -e DISCORD_TOKEN=<Discord Bot Token> --restart=unless-stopped --name steamscord steamscordbot
+docker run -d -e STEAM_APIKEY=<Steam API key> -e DISCORD_TOKEN=<Discord Bot Token> --restart=unless-stopped --name steamscord esabouraud/steamscordbot
 ```
 
 ## Usage
