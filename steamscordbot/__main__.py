@@ -12,8 +12,8 @@ from steam.webapi import WebAPI
 import discord.ext.commands
 import steamscordbot
 
-# A regex to determine if a input looks like a SteamId
-PROFILE_RX = re.compile(r"^\d+$")
+
+# Constants
 ACHIEVEMENT_RAREST = "rarest"
 ACHIEVEMENT_LATEST = "latest"
 ACHIEVEMENT_CRITERIA = [ACHIEVEMENT_RAREST, ACHIEVEMENT_LATEST]
@@ -22,10 +22,22 @@ FRIENDS_OWNED = "owned"
 FRIENDS_RECENT = "recent"
 FRIENDS_SUBCOMMANDS = ["list", "owned", "recent"]
 
-# The main bot discord client object
-bot = discord.ext.commands.Bot("!$", activity=discord.Game("!$help"))
+# Global variables
+# A regex to determine if a input looks like a SteamId
+PROFILE_RX = re.compile(r"^\d+$")
 # The API key to use when performing calls to the Steamworks Web API
 STEAM_APIKEY = None
+# The bot chat command prefix
+COMMAND_PREFIX = "!$"
+
+
+def get_prefix(_bot, _message):
+    """Return the bot current command_prefix"""
+    return COMMAND_PREFIX
+
+
+# The main bot discord client object
+bot = discord.ext.commands.Bot(get_prefix)
 
 
 def call_steamapi(*args, **kwargs):
@@ -531,6 +543,7 @@ async def friends(ctx, vanity_or_steamid=None, subcommand=None, max_count_str=10
 @bot.event
 async def on_ready():
     """Finalize bot connection to Discord"""
+    await bot.change_presence(activity=discord.Game("%shelp" % get_prefix(None, None)))
     print("We have logged in as {0.user}".format(bot))
 
 
@@ -543,12 +556,20 @@ def main():
     parser.add_argument(
         "-D", "--discord-token", dest="discord_token", default=None, help="Discord token")
     parser.add_argument(
+        "-C", "--command-prefix", dest="command_prefix", default=None, help="Bot command prefix")
+    parser.add_argument(
         "--version", action="version", version=steamscordbot.__version__)
     options = parser.parse_args()
 
     global STEAM_APIKEY
+    global COMMAND_PREFIX
     STEAM_APIKEY = options.steam_apikey if options.steam_apikey else os.environ["STEAM_APIKEY"]
     discord_token = options.discord_token if options.discord_token else os.environ["DISCORD_TOKEN"]
+    if options.command_prefix:
+        COMMAND_PREFIX = options.command_prefix
+    elif "COMMAND_PREFIX" in os.environ:
+        COMMAND_PREFIX = os.environ["COMMAND_PREFIX"]
+
     try:
         bot.run(discord_token)
     except KeyboardInterrupt:
