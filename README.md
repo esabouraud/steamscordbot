@@ -59,7 +59,7 @@ docker build -t esabouraud/steamscordbot .
 ### Generic
 
 ```sh
-python -m steamscordbot --steam_apikey=<Steam API key> --discord-token=<Discord Bot Token>
+python -m steamscordbot --steam-apikey=<Steam API key> --discord-token=<Discord Bot Token>
 ```
 
 The CLI arguments can also be passed as environment variables (useful when running in a container hosted by a cloud service provider).
