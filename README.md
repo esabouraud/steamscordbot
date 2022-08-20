@@ -20,6 +20,7 @@ It depends on:
 
 - Get a Steam API key : <https://steamcommunity.com/dev/apikey>
 - Get a Discord Bot Token : <https://discord.com/developers/applications>
+  - Enable "Message Content Intent"
 
 ## Installation
 

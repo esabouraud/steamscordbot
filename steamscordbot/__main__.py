@@ -35,9 +35,11 @@ def get_prefix(_bot, _message):
     """Return the bot current command_prefix"""
     return COMMAND_PREFIX
 
-
+# Minimal intents required by the bot
+intents = discord.Intents.default()
+intents.message_content = True # pylint: disable=assigning-non-slot
 # The main bot discord client object
-bot = discord.ext.commands.Bot(get_prefix)
+bot = discord.ext.commands.Bot(get_prefix, intents=intents)
 
 
 def call_steamapi(*args, **kwargs):
@@ -429,7 +431,7 @@ async def friends_owned(ctx, player, max_count, playerslist):
         embed = discord.Embed(
             title=game["name"], type="rich", url="https://store.steampowered.com/app/%s/" % game["appid"])
         embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
-            game["appid"], game["img_logo_url"]))
+            game["appid"], game["img_icon_url"]))
         embed.add_field(name="Owned by", value="%d friends" % (count), inline=True)
         embed.set_footer(text="Owners: %s" % ", ".join(
             [playersdict[steamid]["personaname"] for steamid in steamids]))
@@ -487,7 +489,7 @@ async def friends_recent(ctx, player, max_count, playerslist):
         embed = discord.Embed(
             title=game["name"], type="rich", url="https://store.steampowered.com/app/%s/" % game["appid"])
         embed.set_image(url="http://media.steampowered.com/steamcommunity/public/images/apps/%s/%s.jpg" % (
-            game["appid"], game["img_logo_url"]))
+            game["appid"], game["img_icon_url"]))
         embed.add_field(name="Time played", value="%dh%dm" % divmod(playtime, 60), inline=True)
         embed.add_field(name="Played by", value="%d friends" % (count), inline=True)
         embed.set_footer(text="Players: %s" % ", ".join(
